@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kanban Project Management System</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #1b2638; color: #eaeef5; padding: 24px; }
+  h1 { text-align: center; margin-bottom: 6px; font-weight: 600; }
+  .subtitle { text-align:center; color:#8da2c0; margin-bottom: 20px; font-size: 14px; }
+
+  /* ---- Add task form ---- */
+  .form { background:#243246; padding:16px; border-radius:12px; max-width:760px; margin:0 auto 26px;
+          display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .form input, .form select { padding:10px; border-radius:8px; border:1px solid #3b4d68;
+          background:#1b2638; color:#eaeef5; font-size:14px; }
+  .form input#title { flex:1; min-width:160px; }
+  .form input#desc  { flex:2; min-width:200px; }
+  .form button { padding:10px 18px; border:none; border-radius:8px; background:#4f8cff; color:#fff;
+          font-weight:600; cursor:pointer; }
+  .form button:hover { background:#3a7bff; }
+
+  /* ---- Board columns ---- */
+  .board { display:flex; gap:18px; justify-content:center; align-items:flex-start; flex-wrap:wrap; }
+  .column { background:#243246; border-radius:12px; width:320px; min-height:200px; padding:14px; }
+  .column h2 { font-size:16px; margin-bottom:12px; padding-bottom:8px; border-bottom:2px solid #3b4d68; }
+  .col-count { float:right; background:#3b4d68; border-radius:10px; padding:1px 9px; font-size:12px; }
+
+  /* ---- Task card ---- */
+  .card { background:#1b2638; border-radius:10px; padding:12px; margin-bottom:12px;
+          border-left:5px solid #888; cursor:grab; }
+  .card.dragging { opacity:0.4; }
+  .card .ttl { font-weight:600; margin-bottom:4px; }
+  .card .desc { font-size:13px; color:#a9bcd8; margin-bottom:8px; word-wrap:break-word; }
+  .badge { font-size:11px; font-weight:700; padding:2px 9px; border-radius:10px; color:#fff; }
+
+  /* priority colors */
+  .Low    { border-left-color:#36c275; }
+  .Medium { border-left-color:#f0ad33; }
+  .High   { border-left-color:#e64949; }
+  .badge.Low    { background:#36c275; }
+  .badge.Medium { background:#f0ad33; }
+  .badge.High   { background:#e64949; }
+
+  .actions { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+  .actions button { font-size:11px; padding:4px 8px; border:none; border-radius:6px; cursor:pointer;
+          background:#3b4d68; color:#eaeef5; }
+  .actions button.del { background:#e64949; }
+  .actions button:hover { opacity:0.85; }
+  .column.over { outline:2px dashed #4f8cff; }
+</style>
+</head>
+<body>
+  <h1>Kanban Project Management System</h1>
+  <div class="subtitle">C++ OOP Project &middot; tasks ko drag karke ya buttons se move karein</div>
+
+  <div class="form">
+    <input id="title" placeholder="Task title" />
+    <input id="desc"  placeholder="Description" />
+    <select id="priority">
+      <option value="Low">Low</option>
+      <option value="Medium" selected>Medium</option>
+      <option value="High">High</option>
+    </select>
+    <button onclick="addTask()">+ Add Task</button>
+  </div>
+
+  <div class="board">
+    <div class="column" id="todo"       ondrop="drop(event,'todo')"       ondragover="allow(event)" ondragleave="leave(event)">
+      <h2>To Do <span class="col-count" id="c-todo">0</span></h2><div class="list" id="list-todo"></div>
+    </div>
+    <div class="column" id="inprogress" ondrop="drop(event,'inprogress')" ondragover="allow(event)" ondragleave="leave(event)">
+      <h2>In Progress <span class="col-count" id="c-inprogress">0</span></h2><div class="list" id="list-inprogress"></div>
+    </div>
+    <div class="column" id="done"       ondrop="drop(event,'done')"       ondragover="allow(event)" ondragleave="leave(event)">
+      <h2>Done <span class="col-count" id="c-done">0</span></h2><div class="list" id="list-done"></div>
+    </div>
+  </div>
+
+<script>
+  const cols = ['todo','inprogress','done'];
+  const STORE_KEY = 'kanban_tasks';
+
+  // ---- client-side store (server ke /api/* ki jagah localStorage) ----
+  function read() {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) { try { return JSON.parse(raw); } catch (e) {} }
+    // pehli baar: demo tasks (jaise C++ server start pe karta tha)
+    const seed = [
+      { id:1, title:'Project setup', description:'Repo aur tools ready karo', priority:'High',   status:'todo' },
+      { id:2, title:'Design UI',     description:'Kanban layout banao',        priority:'Medium', status:'todo' },
+      { id:3, title:'Write report',  description:'OOP concepts document karo', priority:'Low',    status:'todo' },
+    ];
+    write(seed);
+    return seed;
+  }
+  function write(tasks) { localStorage.setItem(STORE_KEY, JSON.stringify(tasks)); }
+  function nextId(tasks) { return tasks.reduce((m,t) => Math.max(m, t.id), 0) + 1; }
+
+  // saare tasks render karo
+  function load() {
+    const tasks = read();
+    cols.forEach(c => document.getElementById('list-'+c).innerHTML = '');
+    const counts = {todo:0, inprogress:0, done:0};
+    tasks.forEach(t => {
+      counts[t.status]++;
+      document.getElementById('list-'+t.status).appendChild(card(t));
+    });
+    cols.forEach(c => document.getElementById('c-'+c).innerText = counts[c]);
+  }
+
+  // ek task ka HTML card banao
+  function card(t) {
+    const d = document.createElement('div');
+    d.className = 'card ' + t.priority;
+    d.draggable = true;
+    d.dataset.id = t.id;
+    d.ondragstart = e => { e.dataTransfer.setData('id', t.id); d.classList.add('dragging'); };
+    d.ondragend   = () => d.classList.remove('dragging');
+    d.innerHTML =
+      '<div class="ttl">' + esc(t.title) + '</div>' +
+      (t.description ? '<div class="desc">' + esc(t.description) + '</div>' : '') +
+      '<span class="badge ' + t.priority + '">' + t.priority + '</span>' +
+      '<div class="actions">' +
+        (t.status!=='todo'       ? '<button onclick="move('+t.id+",'todo')\">&larr; To Do</button>" : '') +
+        (t.status!=='inprogress' ? '<button onclick="move('+t.id+",'inprogress')\">In Progress</button>" : '') +
+        (t.status!=='done'       ? '<button onclick="move('+t.id+",'done')\">Done &rarr;</button>" : '') +
+        '<button class="del" onclick="del('+t.id+')">Delete</button>' +
+      '</div>';
+    return d;
+  }
+
+  function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function addTask() {
+    const title = document.getElementById('title').value.trim();
+    if (!title) { alert('Title likhna zaroori hai'); return; }
+    const desc = document.getElementById('desc').value.trim();
+    const priority = document.getElementById('priority').value;
+    const tasks = read();
+    tasks.push({ id: nextId(tasks), title, description: desc, priority, status: 'todo' });
+    write(tasks);
+    document.getElementById('title').value = '';
+    document.getElementById('desc').value  = '';
+    load();
+  }
+
+  function move(id, status) {
+    const tasks = read();
+    const t = tasks.find(x => x.id === id);
+    if (t) { t.status = status; write(tasks); }
+    load();
+  }
+  function del(id) {
+    let tasks = read();
+    tasks = tasks.filter(x => x.id !== id);
+    write(tasks);
+    load();
+  }
+
+  // ---- drag & drop handlers ----
+  function allow(e){ e.preventDefault(); e.currentTarget.classList.add('over'); }
+  function leave(e){ e.currentTarget.classList.remove('over'); }
+  function drop(e, status){
+    e.preventDefault();
+    e.currentTarget.classList.remove('over');
+    const id = e.dataTransfer.getData('id');
+    if (id) move(parseInt(id), status);
+  }
+
+  load();   // page khulte hi load
+</script>
+</body>
+</html>
